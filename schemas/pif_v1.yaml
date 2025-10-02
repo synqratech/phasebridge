@@ -1,0 +1,84 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://example.org/schemas/pif_v1.yaml
+title: PIF v1 (core)
+type: object
+required: [schema, theta, meta]
+
+properties:
+  pif_version:
+    type: string
+  domain:
+    type: string
+
+  schema:
+    type: object
+    required: [alphabet]
+    properties:
+      alphabet:
+        type: object
+        required: [type, M]
+        properties:
+          type:
+            const: uint
+          M:
+            type: integer
+            minimum: 2
+            maximum: 4294967296
+        additionalProperties: true
+      sampling:
+        type: object
+        properties:
+          fs:
+            type: number
+            exclusiveMinimum: 0
+        additionalProperties: true
+    additionalProperties: true
+
+  numeric:
+    type: object
+    properties:
+      dtype:
+        type: string
+      phase_wrap:
+        type: array
+        items: { type: number }
+        minItems: 2
+        maxItems: 2
+    additionalProperties: true
+
+  codec:
+    type: object
+    properties:
+      forward: { type: string }
+      inverse: { type: string }
+    additionalProperties: true
+
+  theta:
+    type: array
+    minItems: 1
+    items: { type: number }
+
+  amp:
+    oneOf:
+      - { type: number, minimum: 0 }
+      - type: array
+        items: { type: number, minimum: 0 }
+
+  meta:
+    type: object
+    required: [note]
+    properties:
+      note:
+        type: string
+        pattern: "^(no_processing|processed:.+)$"
+      hash_raw:
+        type: string
+        pattern: "^sha256:[0-9a-fA-F]{64}$"
+      codec_hash:
+        type: string
+        pattern: "^sha256:[0-9a-fA-F]{64}$"
+      codec:
+        type: string
+    additionalProperties: true
+
+additionalProperties: true

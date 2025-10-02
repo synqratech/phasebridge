@@ -1,0 +1,55 @@
+# Python build & cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.dylib
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Virtualenv / environments
+.venv/
+venv/
+.env/
+.envrc
+
+# Test / coverage / tooling
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editors / OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Project artifacts
+*.mpk
+*.mp
+*.pif.json
+*.pif.msgpack
+*.pif.mpk
+*.npy
+*.npz
+*.bin
+*.csv
+/tmp/
+.out/
+_out*/
+_out*
+/demo/_out_*.json
+/demo/_out_*.png
+
+# Data
+data/
