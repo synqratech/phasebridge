@@ -4,24 +4,24 @@ PhaseBridge is a small, universal **interchange layer** that lets any system mov
 
 At its core, PhaseBridge defines:
 
-* **PIF (Phase Interchange Format)**: a strict, versioned on-wire/in-file format that holds the phase representation and the minimal schema needed to reconstruct the original discrete data.
+* **PIF (Phase Interchange Format)**: a strict, versioned on-wire/in-file format that holds the phase representation (eager θ **or** lazy indices) and the minimal schema needed to reconstruct the original discrete data.
 * **Lossless codecs** (starting with `S1PhaseCodec`): exact round-trip transforms `discrete uintM ↔ θ ∈ [0,2π)`.
-* **κ (kappa) metrics**: simple, consistent measures of **coherence** in phase space (e.g., ( \kappa = |\langle e^{i\theta}\rangle| )) for routing/health/insight — never modifying data.
+* **κ (kappa) metrics**: simple, consistent measures of **coherence** in phase space (e.g., κ = |⟨e^{iθ}⟩|) for routing/health/insight — never modifying data.
 
-> MVP status: **time-series and 8-bit images** (grayscale) with strict round-trip; clean SDK & CLI; windowed κ for series; JSON (and optional MessagePack) PIF serialization.
+> **MVP status:** time-series and 8-bit images (grayscale) with strict round-trip; **lazy-PIF**, **numeric policy (float32/float64)**, **binary I/O** (MessagePack/CBOR/NPZ), clean SDK & CLI, windowed κ for series.
 
 ---
 
 ## Why PhaseBridge?
 
-Most pipelines juggle many **discrete** forms (bytes, tokens, categorical tables) and many **continuous** models (embeddings, spectra, latents). Today, each modality tends to invent its own encoders/normalizations and loses the ability to **round-trip** the exact original data.
+Most pipelines juggle many **discrete** forms (bytes, tokens, categorical tables) and many **continuous** models (embeddings, spectra, latents). Each modality tends to invent its own encoders/normalizations and loses the ability to **round-trip** the exact original data.
 
 PhaseBridge solves this with a **single, minimal, lossless bridge**:
 
-* **Same language for all**: Phase space (unit circle) is a compact, universal continuous target.
-* **Strict reversibility**: When marked as `no_processing`, decoding must reproduce input **bit-for-bit**.
-* **Separation of concerns**: Conversion (lossless) is **separate** from any processing (optional, explicitly labeled).
-* **Composable**: Works as an embedded library, a sidecar process, a streaming operator, or a file format in a lake.
+* **Same language for all:** Phase space (unit circle) is a compact, universal continuous target.
+* **Strict reversibility:** When marked as `no_processing`, decoding must reproduce input **bit-for-bit** (for the declared alphabet).
+* **Separation of concerns:** Conversion (lossless) is **separate** from any processing (optional, explicitly labeled).
+* **Composable:** Works as an embedded library, a sidecar process, a streaming operator, or a file format in a lake.
 
 ---
 
@@ -48,29 +48,48 @@ PhaseBridge solves this with a **single, minimal, lossless bridge**:
 
 ### PIF (Phase Interchange Format)
 
-A minimal, versioned container for phase data:
+A minimal, versioned container for phase data. Two equivalent payload modes:
 
-* `theta: float64[]` — phases wrapped to ([0, 2\pi)).
+* **Eager θ**
+
+  * `theta: float32[] | float64[]` — phases wrapped to `[0, 2π)`.
+  * `numeric.dtype ∈ {"float32","float64"}` and optional `numeric.precision_safe: boolean`.
+  * If `numeric` omitted, default is `"float64"`.
+
+* **Lazy θ**
+
+  * `theta_lazy: true`, `encoded_uint: integer[]` — **no explicit θ stored**.
+  * Consumers materialize `θ = (2π/M)·n` on demand in `numeric.dtype` (default float64).
+  * This drastically reduces size on wire/disk and avoids θ allocation.
+
+Common fields:
+
 * `amp: 1.0` (MVP) — amplitude (scalar now; may be an array later).
 * `schema.alphabet.type="uint"`, `schema.alphabet.M` — discrete alphabet size (e.g., 256 for 8-bit).
 * Optional `schema.sampling.fs` for time series metadata.
+* `numeric.phase_wrap` (optional, default `[0, 2π)`).
 * `meta.note="no_processing"` for lossless conversion.
-* `meta.hash_raw="sha256:..."` — hash of the original discrete input.
+* `meta.hash_raw="sha256:..."` — integrity hash of the original discrete input.
 * `meta.codec`, `meta.codec_hash` — codec identity and a stable hash.
 
-Serialization: **JSON** (default) or **MessagePack** (optional).
+**Serialization:** **JSON** (text) and **binary** formats — **MessagePack**, **CBOR**, **NPZ**.
+For MessagePack/CBOR, ndarrays are packed as `{"__nd__": true, "dtype", "shape", "data": <bytes>}`.
+NPZ stores `schema.json`, `meta.json`, optional `numeric.json`, `flags.json`, and exactly one of `theta.npy` / `encoded_uint.npy`, plus `amp.npy` or `amp.json`.
 
 ### S1PhaseCodec (uintM ↔ θ)
 
-* **Encode**: map each symbol (n \in {0,\dots,M-1}) to ( \theta = 2\pi n/M ).
-* **Decode**: snap ( \theta ) to the **nearest** grid node; exact integer recovery.
-* **Strict range** (default) or modular wrap for inputs beyond ([0,M-1]) if explicitly desired.
+* **Encode:** map each symbol (n ∈ {0,…,M−1}) to θ = (2π/M)·n.
+
+  * Supports **lazy** mode (store `encoded_uint`, defer θ) and **numeric policy** (`float32` vs `float64` with safety).
+* **Decode:** nearest-grid snapping: n = round(M·θ / 2π) mod M.
+
+  * Decoding uses float64 arithmetic for robustness even if θ is float32.
 
 ### κ (kappa) — coherence
 
-* Global: ( \kappa = \left|\langle e^{i\theta}\rangle\right| \in [0,1] ).
+* Global: κ = |⟨e^{iθ}⟩| ∈ [0,1].
 * Windowed: sliding windows over time for local coherence profiles.
-* Weighted variant (future): use `amp` if present as weights.
+* Weighted variant: use `amp` as weights if `amp` is an array.
 
 > κ is **diagnostic only**. It never alters data or threatens round-trip guarantees.
 
@@ -80,10 +99,21 @@ Serialization: **JSON** (default) or **MessagePack** (optional).
 
 * **Lossless round-trip** for declared alphabets (`uintM`):
   If `meta.note=="no_processing"`, then `decode(encode(x)) == x`.
-* **Float64 phases** and consistent phase wrapping; stable nearest-grid decoding.
-* **Schema validation** and basic runtime checks (shape, types, ranges).
-* **Observability**: consistent κ, raw hashes, codec IDs in metadata.
-* **Versioning**: `pif_version` (SemVer) + JSON Schema; backward-compatible minor upgrades.
+
+* **Numeric policy**
+
+  * θ MAY be `float32` (with **conservative safety** `M ≤ 65536` → `precision_safe=true`) or `float64`.
+  * Consumers decode with float64 rounding for nearest-grid snapping.
+
+* **Lazy PIF**
+
+  * `theta_lazy=true` + `encoded_uint`, with on-demand θ materialization in the declared/implicit dtype.
+
+* **Schema validation** and basic runtime checks (shapes, types, ranges).
+
+* **Observability:** consistent κ, raw hashes, codec IDs in metadata.
+
+* **Versioning:** `pif_version` (SemVer) + JSON Schema; backward-compatible minor upgrades.
 
 ---
 
@@ -98,39 +128,41 @@ from phasebridge import S1PhaseCodec, PIF, kappa_timeseries
 # Discrete input: uint8 array in [0..255]
 x = np.arange(0, 256, dtype=np.uint8)
 
-# Build schema and encode
 codec = S1PhaseCodec(M=256)
 schema = {"alphabet": {"type": "uint", "M": 256}}
-p = codec.encode(x, schema)
 
-# Lossless decode
+# 1) Eager θ (float64 by default)
+p = codec.encode(x, schema)
 xr = codec.decode(p)
 assert np.array_equal(x, xr)
+print("kappa (eager):", kappa_timeseries(p))
 
-# κ (diagnostic)
-k = kappa_timeseries(p)
-print("kappa =", k)
+# 2) Lazy θ + prefer float32 (safe for M ≤ 65536)
+p_lazy = codec.encode(x, schema, lazy_theta=True, prefer_float32=True, allow_downgrade=True)
+print("theta dtype on materialize:", p_lazy.theta_view.dtype)
 
-# Serialize to JSON
-s = p.to_json(indent=2)
-p2 = PIF.from_json(s, validate=True)
+# 3) Binary round-trip (CBOR / MessagePack / NPZ)
+blob = p_lazy.to_bytes(fmt="cbor")
+p_lazy2 = PIF.from_bytes(blob, fmt="cbor", validate=True)
+assert np.array_equal(codec.decode(p_lazy2), x)
 ```
 
 ### CLI
 
 ```bash
-# Encode raw bytes (stdin) -> PIF JSON (stdout)
-cat input.bin | pb-encode --in - --in-fmt bin --dtype uint8 --M 256 > out.pif.json
+# Encode raw bytes (stdin) -> PIF (lazy + prefer float32) in MessagePack
+cat input.bin | pb-encode --in - --in-fmt bin --dtype uint8 --M 256 \
+  --lazy --prefer-float32 --pif-fmt msgpack > out_lazy.pif.mpk
 
-# Decode PIF JSON (stdin) -> raw bytes (stdout)
-cat out.pif.json | pb-decode --in - --pif-fmt json --out - --out-fmt bin > recon.bin
+# Decode PIF (any format) -> raw bytes
+pb-decode --in out_lazy.pif.mpk --pif-fmt msgpack --out recon.bin --out-fmt bin
 
-# Validate (schema/runtime/hash/round-trip against a raw file)
-pb-validate --in out.pif.json --raw input.bin --in-fmt bin --dtype uint8 --report json
+# Validate (schema/runtime/hash) with NPZ
+pb-validate --in out_lazy.pif.npz --pif-fmt npz --report json
 
-# Compute kappa (global or windowed)
-pb-kappa --in out.pif.json --fmt plain
-pb-kappa --in out.pif.json --win 256 --hop 128 --fmt csv
+# κ (global/windowed) from CBOR
+pb-kappa --in out_lazy.pif.cbor --pif-fmt cbor --fmt plain
+pb-kappa --in out_lazy.pif.cbor --pif-fmt cbor --win 256 --hop 128 --fmt csv
 ```
 
 ---
@@ -140,32 +172,32 @@ pb-kappa --in out.pif.json --win 256 --hop 128 --fmt csv
 * **Embedded SDK** (Python today; others can bind): call `encode`/`decode`/`kappa` in-process.
 * **Sidecar** (later): a tiny gRPC/HTTP process offering `/encode`, `/decode`, `/kappa`, `/validate`.
 * **Streaming operators** (later): Kafka/Flink connectors (`pif-encode`, `pif-decode`, `pif-kappa`).
-* **Data lake**: store PIF objects next to raw; reproducible pipelines (hashes match, schema pinned).
+* **Data lake:** store PIF objects next to raw; reproducible pipelines (hashes match, schema pinned).
 
 ---
 
 ## File & Wire Format
 
-* **JSON** (default): human-readable, easy to debug.
-* **MessagePack** (optional): compact binary for high-throughput paths.
-* **JSON Schema**: `schemas/pif_v1.json` (authoritative) + YAML view.
-* **SemVer**: changes to PIF evolve via minor/patch bumps with CI conformance checks.
+* **JSON** (default; human-readable).
+* **Binary:** **MessagePack**, **CBOR**, **NPZ** for high-throughput paths and compact storage.
+* **JSON Schema:** `schemas/pif_v1.json` (authoritative) + YAML mirror.
+* **SemVer:** changes to PIF evolve via minor/patch bumps with CI conformance checks.
 
 ---
 
 ## Security & Privacy Notes
 
 * PIF may carry hashes of raw data. Avoid storing sensitive raw in PIF payloads or derived fields.
-* If raw data is sensitive, consider hashing locally and **never** transmitting the raw file; PhaseBridge needs only the discrete input at encode time.
-* For integrity, verify `meta.hash_raw` after decode. For authenticity, you can add signatures in future (`meta.sig`).
+* If raw data is sensitive, hash locally and **never** transmit the raw file; PhaseBridge needs only the discrete input at encode time.
+* For integrity, verify `meta.hash_raw` after decode. For authenticity, add signatures later (e.g., `meta.sig`).
 
 ---
 
 ## Performance Notes
 
 * Encode/decode are **O(N)** and vectorized (NumPy).
-* θ stored in `float64`; decoding uses nearest-grid snapping (stable and fast).
-* For large arrays, prefer MessagePack serialization and binary raw I/O.
+* **Lazy + float32** can cut memory/IO significantly (no θ array stored; θ materialized in float32 when safe).
+* **Binary formats** (MessagePack/CBOR/NPZ) are typically ×10–×50 faster for large arrays vs plain JSON.
 
 ---
 
@@ -179,10 +211,10 @@ pb-kappa --in out.pif.json --win 256 --hop 128 --fmt csv
 
 ## Roadmap
 
-* **Adapters**: Tables, logs/events, graphs, text (token-level `uintM`), multi-channel audio, RGB images.
+* **Adapters:** tables, logs/events, graphs, text (token-level `uintM`), multi-channel audio, RGB images.
 * **Weighted κ** by amplitude arrays; κ variations per modality (kept read-only).
 * **Sidecar service** & **stream connectors**.
-* **PIF v1.x**: optional fields for multi-channel layouts, chunked/streaming θ, and signatures.
+* **PIF v1.x:** optional fields for multi-channel layouts, chunked/streaming θ, and signatures.
 
 ---
 
@@ -198,7 +230,7 @@ A: It’s inspired by the same math, but PhaseBridge standardizes a **data inter
 A: No. When `meta.note="no_processing"`, the platform performs **pure conversion** only. Any future processing must be explicit and labeled.
 
 **Q: Will this work for non-uint data?**
-A: Yes, by **quantization to an alphabet** (`uintM`) declared in the schema. The bridge remains lossless **with respect to the declared alphabet**.
+A: Yes, via **quantization to an alphabet** (`uintM`) declared in the schema. The bridge remains lossless **with respect to the declared alphabet**.
 
 **Q: How does κ help?**
 A: κ is a lightweight, modality-agnostic signal for **structure vs noise** and can route data between discrete/continuous/hybrid blocks **without changing the data**.

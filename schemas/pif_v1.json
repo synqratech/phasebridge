@@ -3,7 +3,9 @@
   "$id": "https://example.org/schemas/pif_v1.json",
   "title": "PIF v1 (core)",
   "type": "object",
-  "required": ["schema", "theta", "meta"],
+
+  "required": ["schema", "meta"],
+
   "properties": {
     "pif_version": { "type": "string" },
     "domain": { "type": "string" },
@@ -39,7 +41,8 @@
     "numeric": {
       "type": "object",
       "properties": {
-        "dtype": { "type": "string" },
+        "dtype": { "enum": ["float32", "float64"] },
+        "precision_safe": { "type": "boolean" },
         "phase_wrap": {
           "type": "array",
           "items": { "type": "number" },
@@ -65,6 +68,14 @@
       "items": { "type": "number" }
     },
 
+    "encoded_uint": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "integer" }
+    },
+
+    "theta_lazy": { "type": "boolean" },
+
     "amp": {
       "oneOf": [
         { "type": "number", "minimum": 0 },
@@ -87,5 +98,21 @@
       "additionalProperties": true
     }
   },
+
+  "oneOf": [
+    {
+      "required": ["theta"],
+      "properties": {
+        "theta_lazy": { "const": false }
+      }
+    },
+    {
+      "required": ["theta_lazy", "encoded_uint"],
+      "properties": {
+        "theta_lazy": { "const": true }
+      }
+    }
+  ],
+
   "additionalProperties": true
 }

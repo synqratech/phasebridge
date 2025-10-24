@@ -38,12 +38,18 @@ def save_uint8_L_as_image(path: Path, arr_hw: np.ndarray) -> None:
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Image round-trip demo: 8-bit grayscale image -> PIF(JSON) -> image, strict equality"
+        description="Image round-trip demo: 8-bit grayscale image -> PIF (json/msgpack/cbor/npz) -> image, strict equality"
     )
     ap.add_argument("--in-img", required=True, help="input image (any mode; will be converted to 8-bit L)")
-    ap.add_argument("--out-pif", required=True, help="path to save PIF JSON")
+    ap.add_argument("--out-pif", required=True, help="path to save PIF (json/msgpack/cbor/npz)")
+    ap.add_argument("--pif-fmt", choices=["json","msgpack","cbor","npz"], default="json",
+                    help="PIF format (default: json)")
     ap.add_argument("--out-img", required=True, help="path to save reconstructed PNG image (8-bit L)")
     ap.add_argument("--M", type=int, default=256, help="alphabet size (for 8-bit L use 256)")
+    ap.add_argument("--lazy", action="store_true", help="emit Lazy θ (theta_lazy=true + encoded_uint)")
+    ap.add_argument("--prefer-float32", action="store_true", help="prefer float32 θ when safe (M ≤ 65536)")
+    ap.add_argument("--no-downgrade", action="store_true", help="do not auto-upgrade to float64 if float32 deemed unsafe")
+    ap.add_argument("--pretty", action="store_true", help="pretty JSON output (indent=2)")
     args = ap.parse_args()
 
     in_img = Path(args.in_img)
@@ -66,13 +72,25 @@ def main():
         "alphabet": {"type": "uint", "M": M},
         "image": {"height": H, "width": W, "mode": "L", "src_mode": imeta["src_mode"], "src_size": imeta["src_size"]},
     }
-    p = codec.encode(x, schema=schema)
+    p = codec.encode(
+        x,
+        schema=schema,
+        lazy_theta=bool(args.lazy),
+        prefer_float32=bool(args.prefer_float32),
+        allow_downgrade=not bool(args.no_downgrade),
+    )
 
-    # 3) Save PIF as JSON
-    out_pif.write_text(p.to_json(indent=2), encoding="utf-8")
+    # 3) Save PIF (json/msgpack/cbor/npz)
+    if args.pif_fmt == "json":
+        out_pif.write_text(p.to_json(indent=2 if args.pretty else 0), encoding="utf-8")
+    else:
+        out_pif.write_bytes(p.to_bytes(fmt=args.pif_fmt))
 
-    # 4) Decode back
-    p2 = PIF.from_json(out_pif.read_text(encoding="utf-8"), validate=True)
+    # 4) Load & decode back
+    if args.pif_fmt == "json":
+        p2 = PIF.from_json(out_pif.read_text(encoding="utf-8"), validate=True)
+    else:
+        p2 = PIF.from_bytes(out_pif.read_bytes(), fmt=args.pif_fmt, validate=True)
     x_rec = codec.decode(p2)
     arr_rec = x_rec.reshape(H, W)
 
@@ -95,6 +113,9 @@ def main():
         "M": M,
         "H": H,
         "W": W,
+        "pif_fmt": args.pif_fmt,
+        "theta_lazy": bool(getattr(p, "theta_lazy", False)),
+        "numeric": (p.numeric or None),
         "arrays_equal": arrays_equal,
         "sha256_in": sha_in,
         "sha256_rec": sha_rec,

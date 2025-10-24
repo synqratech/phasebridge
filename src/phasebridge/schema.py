@@ -21,6 +21,7 @@ _DEFAULT_PIF_V1_SCHEMA: Dict[str, Any] = {
     "properties": {
         "pif_version": {"type": "string"},  # optional; SemVer if desired
         "domain": {"type": "string"},
+
         "schema": {
             "type": "object",
             "required": ["alphabet"],
@@ -48,10 +49,12 @@ _DEFAULT_PIF_V1_SCHEMA: Dict[str, Any] = {
             },
             "additionalProperties": True
         },
+
         "numeric": {
             "type": "object",
             "properties": {
-                "dtype": {"type": "string"},
+                "dtype": {"enum": ["float32", "float64"]},
+                "precision_safe": {"type": "boolean"},
                 "phase_wrap": {
                     "type": "array",
                     "items": {"type": "number"},
@@ -61,6 +64,7 @@ _DEFAULT_PIF_V1_SCHEMA: Dict[str, Any] = {
             },
             "additionalProperties": True
         },
+
         "codec": {
             "type": "object",
             "properties": {
@@ -69,11 +73,21 @@ _DEFAULT_PIF_V1_SCHEMA: Dict[str, Any] = {
             },
             "additionalProperties": True
         },
+
+        # --- Phase / Symbols ---
         "theta": {
             "type": "array",
             "minItems": 1,
             "items": {"type": "number"}
         },
+        "encoded_uint": {
+            "type": "array",
+            "items": {"type": "integer"},
+            "minItems": 1
+        },
+        "theta_lazy": {"type": "boolean"},
+
+        # --- Amplitude ---
         "amp": {
             "oneOf": [
                 {"type": "number", "minimum": 0},
@@ -83,6 +97,8 @@ _DEFAULT_PIF_V1_SCHEMA: Dict[str, Any] = {
                 }
             ]
         },
+
+        # --- Meta ---
         "meta": {
             "type": "object",
             "required": ["note"],
@@ -136,6 +152,18 @@ def load_schema_file(path: str | pathlib.Path) -> Dict[str, Any]:
     return obj
 
 
+def _relax_schema_for_lazy_theta(schema: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Produce a copy of the schema with relaxed 'required' set (no 'theta' required)
+    for lazy-θ objects (theta_lazy=true with encoded_uint present).
+    """
+    import copy
+    s = copy.deepcopy(schema)
+    # Relax top-level required: keep 'schema' and 'meta' as required; do not require 'theta'.
+    s["required"] = ["schema", "meta"]
+    return s
+
+
 def validate_pif_dict(
     pif_obj: Dict[str, Any],
     schema: Optional[Dict[str, Any]] = None,
@@ -146,6 +174,10 @@ def validate_pif_dict(
     Validate a PIF dictionary against JSON Schema (if use_jsonschema is True and library available)
     and/or via strict runtime validation (PIF.from_dict + validate_pif).
 
+    Lazy-θ handling:
+      - If pif_obj has {"theta_lazy": true, "encoded_uint": [...]}, JSON Schema requirement for 'theta'
+        is relaxed at runtime by using a modified schema copy.
+
     Raises:
         jsonschema.ValidationError (if jsonschema is active and validation fails),
         ValueError (if runtime validation fails)
@@ -155,13 +187,17 @@ def validate_pif_dict(
 
     # JSON Schema validation (if enabled and available)
     if use_jsonschema and _HAVE_JSONSCHEMA:
-        jsonschema.validate(instance=pif_obj, schema=schema)  # type: ignore
+        # If lazy-θ object detected, relax the 'theta' requirement.
+        is_lazy = bool(pif_obj.get("theta_lazy")) and ("encoded_uint" in pif_obj)
+        eff_schema = _relax_schema_for_lazy_theta(schema) if is_lazy else schema
+        jsonschema.validate(instance=pif_obj, schema=eff_schema)  # type: ignore
 
     if also_runtime_validate:
-        # runtime validation: convert to PIF + strict checks (dtype, phase, amp, meta)
+        # runtime validation: convert to PIF + strict checks (dtype, phase/symbols, amp, meta)
         p = PIF.from_dict(pif_obj, validate=True)
         # PIF.from_dict(validate=True) already calls validate_pif(p)
         # Additional business validation could be added here if needed.
+
 
 def validate_pif_json(
     pif_json: str,

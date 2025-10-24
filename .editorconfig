@@ -21,3 +21,6 @@ trim_trailing_whitespace = false
 # YAML/JSON: 2 spaces
 [*.{yml,yaml,json}]
 indent_size = 2
+
+[*.toml]
+indent_size = 2

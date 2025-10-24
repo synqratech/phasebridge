@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "phasebridge"
-version = "0.1.0"
-description = "PhaseBridge — strict, lossless discrete ↔ phase ↔ discrete interchange (PIF v1)"
+version = "0.2.0"
+description = "PhaseBridge — strict, lossless discrete ↔ phase ↔ discrete interchange (PIF v1) with lazy-PIF, numeric policy, and binary formats"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
@@ -24,8 +24,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Install like: pip install .[msgpack,pillow,hypothesis,dev]
+# Install like: pip install .[msgpack,cbor,pillow,hypothesis,dev,all]
 msgpack = ["msgpack>=1.0.4"]
+cbor = ["cbor2>=5.4.0"]
 pillow = ["Pillow>=9.0.0"]
 hypothesis = ["hypothesis>=6.0.0"]
 dev = [
@@ -34,6 +35,12 @@ dev = [
   "pytest>=7.0.0",
   "pytest-cov>=4.0.0",
   "jsonschema>=4.0.0",
+]
+all = [
+  "msgpack>=1.0.4",
+  "cbor2>=5.4.0",
+  "Pillow>=9.0.0",
+  "hypothesis>=6.0.0",
 ]
 
 [project.scripts]

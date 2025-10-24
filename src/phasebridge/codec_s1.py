@@ -4,12 +4,14 @@ import numpy as np
 import hashlib
 from typing import Dict, Any
 from .pif import PIF, validate_pif
+from .utils import choose_phase_dtype  # dtype policy
 
 TWO_PI = 2.0 * np.pi
 
+
 class S1PhaseCodec:
     """Strict phase codec (uintM ↔ θ), lossless round-trip.
-    θ = 2π * n / M; decoding uses nearest lattice node; dtype chosen based on M.
+    θ = 2π * n / M; decoding uses nearest lattice node; dtype chosen based on M / policy.
     """
 
     def __init__(self, M: int = 256, strict_range: bool = True):
@@ -67,21 +69,48 @@ class S1PhaseCodec:
             raise ValueError(f"schema.alphabet.M ({alpha.get('M')}) != codec.M ({self.M})")
 
     # ---------- API ----------
-    def encode(self, x_uint: np.ndarray, schema: Dict[str, Any]) -> PIF:
-        """Discrete → phase (strict conversion, no processing)."""
+    def encode(
+        self,
+        x_uint: np.ndarray,
+        schema: Dict[str, Any],
+        *,
+        lazy_theta: bool = False,
+        prefer_float32: bool = False,
+        allow_downgrade: bool = True
+    ) -> PIF:
+        """Discrete → phase (strict conversion, no processing).
+
+        Args:
+            x_uint: unsigned integer array of symbols in [0, M-1] (strict) or any (wrapped if not strict).
+            schema: PIF schema dict; must match codec M and type 'uint'.
+            lazy_theta: if True, store encoded_uint and defer θ materialization until first access.
+            prefer_float32: if True, try to store θ as float32 when safe by policy.
+            allow_downgrade: if True, fall back to float64 when float32 deemed unsafe.
+
+        Returns:
+            PIF object (eager θ or lazy-θ), with numeric policy recorded.
+        """
         if not np.issubdtype(x_uint.dtype, np.unsignedinteger):
             raise ValueError("Input must be unsigned integer array.")
         self._check_schema_compat(schema)
 
-        n = x_uint.astype(np.int64)
+        # Normalize range according to strict mode
+        n64 = x_uint.astype(np.int64)
         if self.strict_range:
-            if np.any(n < 0) or np.any(n >= self.M):
+            if np.any(n64 < 0) or np.any(n64 >= self.M):
                 raise ValueError(f"Values out of range [0, {self.M-1}] for strict mode")
+            n_norm = n64
         else:
-            n = n % self.M
+            n_norm = n64 % self.M
 
-        theta = (TWO_PI * n / self.M).astype(np.float64)
+        # Decide phase dtype policy
+        phase_dtype, precision_safe = choose_phase_dtype(self.M, prefer_float32, allow_downgrade)
+        numeric = {
+            "dtype": "float32" if phase_dtype == np.float32 else "float64",
+            "precision_safe": bool(precision_safe),
+        }
 
+        # Meta
         raw_bytes = np.ascontiguousarray(x_uint).tobytes()
         meta = {
             "note": "no_processing",
@@ -90,7 +119,27 @@ class S1PhaseCodec:
             "codec": self._codec_id(),
         }
 
-        p = PIF(schema=schema, theta=theta, amp=1.0, meta=meta)
+        if lazy_theta:
+            # Lazy-θ mode: store encoded_uint only; theta is materialized on first access using `numeric["dtype"]`.
+            meta["theta_lazy"] = True  # informational
+            out_dtype = self._min_uint_dtype_for_output(self.M)
+            encoded_uint = n_norm.astype(out_dtype, copy=False)
+            p = PIF(
+                schema=schema,
+                theta=None,
+                amp=1.0,
+                meta=meta,
+                numeric=numeric,
+                encoded_uint=encoded_uint,
+                theta_lazy=True,
+                _theta_cache=None,
+            )
+            validate_pif(p)
+            return p
+
+        # Eager θ mode: compute θ = 2π * n / M in chosen dtype
+        theta = (TWO_PI * n_norm / self.M).astype(phase_dtype)
+        p = PIF(schema=schema, theta=theta, amp=1.0, meta=meta, numeric=numeric)
         validate_pif(p)  # basic PIF validation
         return p
 
@@ -98,7 +147,9 @@ class S1PhaseCodec:
         """Phase → discrete (strict reversibility when meta.note == 'no_processing')."""
         if verify_schema:
             self._check_schema_compat(p.schema)
-        theta = np.mod(p.theta.astype(np.float64), TWO_PI)
+
+        # Obtain θ (materializes in lazy mode if needed); decode in float64 for stability
+        theta = np.mod(p.theta_view.astype(np.float64), TWO_PI)
         n = np.rint(self.M * theta / TWO_PI).astype(np.int64) % self.M
         out_dtype = self._min_uint_dtype_for_output(self.M)
         return n.astype(out_dtype)

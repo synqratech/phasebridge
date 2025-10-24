@@ -7,13 +7,6 @@ from pathlib import Path
 from typing import Optional
 import numpy as np
 
-try:
-    import msgpack  # optional
-    _HAVE_MSGPACK = True
-except Exception:
-    msgpack = None  # type: ignore
-    _HAVE_MSGPACK = False
-
 from phasebridge.codec_s1 import S1PhaseCodec
 from phasebridge.pif import PIF
 
@@ -49,15 +42,12 @@ def _serialize_pif_json(p: PIF, pretty: bool) -> bytes:
     s = p.to_json(indent=2 if pretty else 0)
     return s.encode("utf-8")
 
-def _serialize_pif_msgpack(p: PIF) -> bytes:
-    if not _HAVE_MSGPACK:
-        raise RuntimeError("msgpack not installed. pip install msgpack")
-    obj = p.to_dict()
-    return msgpack.packb(obj, use_bin_type=True)  # type: ignore
-
 def main():
     ap = argparse.ArgumentParser(
-        description="PIF encoder (strict lossless): raw (bin/csv/npy) -> PIF (json/msgpack)"
+        description=(
+            "PIF encoder (strict lossless): raw (bin/csv/npy) -> PIF (json/msgpack/cbor/npz). "
+            "Supports lazy encoding (store encoded_uint) and float32 policy when safe."
+        )
     )
     ap.add_argument("--in", dest="inp", default="-", help="input file path or '-' for stdin")
     ap.add_argument("--in-fmt", dest="in_fmt", choices=["bin","csv","npy"], default="bin",
@@ -66,9 +56,17 @@ def main():
     ap.add_argument("--M", dest="M", type=int, default=256, help="alphabet size (default 256)")
     ap.add_argument("--fs", dest="fs", type=float, default=None, help="sampling rate (optional)")
     ap.add_argument("--out", dest="out", default="-", help="output PIF file or '-' for stdout")
-    ap.add_argument("--pif-fmt", dest="pif_fmt", choices=["json","msgpack"], default="json",
-                    help="PIF format (default: json)")
+    ap.add_argument(
+        "--pif-fmt",
+        dest="pif_fmt",
+        choices=["json", "msgpack", "cbor", "npz"],
+        default="json",
+        help="PIF format (default: json)",
+    )
     ap.add_argument("--pretty", dest="pretty", action="store_true", help="pretty JSON (indent=2)")
+    ap.add_argument("--lazy", action="store_true", help="store encoded_uint (lazy theta materialization)")
+    ap.add_argument("--prefer-float32", action="store_true", help="prefer float32 theta when safe for given M")
+    ap.add_argument("--no-downgrade", action="store_true", help="do not auto-upgrade to float64 if float32 deemed unsafe")
 
     args = ap.parse_args()
 
@@ -90,13 +88,20 @@ def main():
     if args.fs is not None:
         schema["sampling"] = {"fs": float(args.fs)}
 
-    p = codec.encode(x, schema=schema)
+    p = codec.encode(
+        x,
+        schema=schema,
+        lazy_theta=bool(args.lazy),
+        prefer_float32=bool(args.prefer_float32),
+        allow_downgrade=not bool(args.no_downgrade),
+    )
 
     # serialize PIF
     if args.pif_fmt == "json":
         out_bytes = _serialize_pif_json(p, pretty=bool(args.pretty))
     else:
-        out_bytes = _serialize_pif_msgpack(p)
+        # Use binary serializer for msgpack/cbor/npz (ndarray-aware packing)
+        out_bytes = p.to_bytes(fmt=args.pif_fmt)
 
     # write out
     if args.out == "-" or args.out.strip() == "":
@@ -105,8 +110,16 @@ def main():
     else:
         Path(args.out).write_bytes(out_bytes)
 
-    print(f"[pb-encode] {inp_desc} -> {args.out}  (N={x.size}, M={args.M}, fmt={args.pif_fmt})", file=sys.stderr)
+    extra = []
+    if getattr(p, "theta_lazy", False):
+        extra.append("lazy")
+    if p.numeric:
+        extra.append(p.numeric.get("dtype", ""))
+    extra_str = ("; " + ",".join([e for e in extra if e])) if extra else ""
+    print(
+        f"[pb-encode] {inp_desc} -> {args.out}  (N={x.size}, M={args.M}, fmt={args.pif_fmt}{extra_str})",
+        file=sys.stderr,
+    )
 
 if __name__ == "__main__":
     main()
-

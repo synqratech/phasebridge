@@ -2,7 +2,8 @@ $schema: https://json-schema.org/draft/2020-12/schema
 $id: https://example.org/schemas/pif_v1.yaml
 title: PIF v1 (core)
 type: object
-required: [schema, theta, meta]
+
+required: [schema, meta]
 
 properties:
   pif_version:
@@ -38,7 +39,9 @@ properties:
     type: object
     properties:
       dtype:
-        type: string
+        enum: ["float32", "float64"]
+      precision_safe:
+        type: boolean
       phase_wrap:
         type: array
         items: { type: number }
@@ -57,6 +60,14 @@ properties:
     type: array
     minItems: 1
     items: { type: number }
+
+  encoded_uint:
+    type: array
+    minItems: 1
+    items: { type: integer }
+
+  theta_lazy:
+    type: boolean
 
   amp:
     oneOf:
@@ -80,5 +91,15 @@ properties:
       codec:
         type: string
     additionalProperties: true
+
+oneOf:
+  - required: [theta]
+    properties:
+      theta_lazy:
+        const: false
+  - required: [theta_lazy, encoded_uint]
+    properties:
+      theta_lazy:
+        const: true
 
 additionalProperties: true

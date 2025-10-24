@@ -4,13 +4,6 @@ import argparse, sys, json
 from pathlib import Path
 import numpy as np
 
-try:
-    import msgpack  # optional
-    _HAVE_MSGPACK = True
-except Exception:
-    msgpack = None  # type: ignore
-    _HAVE_MSGPACK = False
-
 from phasebridge.pif import PIF
 from phasebridge.codec_s1 import S1PhaseCodec
 from phasebridge.schema import validate_pif_dict, validate_pif_json
@@ -24,6 +17,10 @@ def _detect_pif_fmt(path: Path | None, explicit: str | None) -> str:
     suf = path.suffix.lower()
     if suf in (".mp", ".msgpack", ".mpk"):
         return "msgpack"
+    if suf in (".cbor", ".cbor2"):
+        return "cbor"
+    if suf == ".npz":
+        return "npz"
     return "json"
 
 def _load_pif(path: Path | None, pif_fmt: str, raw_bytes: bytes | None = None) -> dict | PIF:
@@ -39,17 +36,12 @@ def _load_pif(path: Path | None, pif_fmt: str, raw_bytes: bytes | None = None) -
             validate_pif_json(s, use_jsonschema=False, also_runtime_validate=True)
             return PIF.from_json(s, validate=True)
     else:
-        # msgpack
+        # binary formats (msgpack/cbor/npz)
         if raw_bytes is None:
             assert path is not None
             raw_bytes = path.read_bytes()
-        if not _HAVE_MSGPACK:
-            raise RuntimeError("msgpack not installed. pip install msgpack")
-        obj = msgpack.unpackb(raw_bytes, raw=False)  # type: ignore
-        if not isinstance(obj, dict):
-            raise ValueError("msgpack root must be an object")
-        validate_pif_dict(obj, use_jsonschema=False, also_runtime_validate=True)
-        return PIF.from_dict(obj, validate=True)
+        # use unified binary loader with ndarray-unpacking inside
+        return PIF.from_bytes(raw_bytes, fmt=pif_fmt, validate=True)
 
 def _load_raw_file(path: Path, in_fmt: str, dtype: np.dtype) -> np.ndarray:
     in_fmt = in_fmt.lower()
@@ -70,7 +62,7 @@ def main():
         description="Validate PIF: schema/runtime, decode, hash check, raw match (optional)"
     )
     ap.add_argument("--in", dest="inp", default="-", help="input PIF file or '-' for stdin")
-    ap.add_argument("--pif-fmt", choices=["json","msgpack"], default=None, help="PIF format (auto)")
+    ap.add_argument("--pif-fmt", choices=["json","msgpack","cbor","npz"], default=None, help="PIF format (auto)")
     ap.add_argument("--raw", dest="raw", default=None, help="optional raw file to compare with decoded")
     ap.add_argument("--in-fmt", dest="in_fmt", choices=["bin","csv","npy"], default="bin",
                     help="raw input format (if --raw is given)")
@@ -166,4 +158,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

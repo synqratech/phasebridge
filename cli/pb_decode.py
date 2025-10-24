@@ -7,13 +7,6 @@ from pathlib import Path
 from typing import Optional
 import numpy as np
 
-try:
-    import msgpack  # optional
-    _HAVE_MSGPACK = True
-except Exception:
-    msgpack = None  # type: ignore
-    _HAVE_MSGPACK = False
-
 from phasebridge.pif import PIF
 from phasebridge.codec_s1 import S1PhaseCodec
 
@@ -25,19 +18,19 @@ def _detect_pif_fmt(path: Optional[Path], explicit: Optional[str]) -> str:
     suf = path.suffix.lower()
     if suf in (".mp", ".msgpack", ".mpk"):
         return "msgpack"
+    if suf in (".cbor", ".cbor2"):
+        return "cbor"
+    if suf == ".npz":
+        return "npz"
     return "json"
 
 def _load_pif_json_bytes(b: bytes) -> PIF:
     s = b.decode("utf-8")
     return PIF.from_json(s, validate=True)
-
-def _load_pif_msgpack_bytes(b: bytes) -> PIF:
-    if not _HAVE_MSGPACK:
-        raise RuntimeError("msgpack not installed. pip install msgpack")
-    obj = msgpack.unpackb(b, raw=False)  # type: ignore
-    if not isinstance(obj, dict):
-        raise ValueError("msgpack root must be an object")
-    return PIF.from_dict(obj, validate=True)
+ 
+def _load_pif_binary_bytes(b: bytes, fmt: str) -> PIF:
+    # Unified ndarray-aware binary deserializer for msgpack/cbor/npz
+    return PIF.from_bytes(b, fmt=fmt, validate=True)
 
 def _save_raw(x: np.ndarray, out_fmt: str, out_path: Optional[Path]) -> None:
     out_fmt = out_fmt.lower()
@@ -70,10 +63,10 @@ def _save_raw(x: np.ndarray, out_fmt: str, out_path: Optional[Path]) -> None:
 
 def main():
     ap = argparse.ArgumentParser(
-        description="PIF decoder (strict lossless): PIF (json/msgpack) -> raw (bin/csv/npy)"
+        description="PIF decoder (strict lossless): PIF (json/msgpack/cbor/npz) -> raw (bin/csv/npy)"
     )
     ap.add_argument("--in", dest="inp", default="-", help="input PIF file or '-' for stdin")
-    ap.add_argument("--pif-fmt", dest="pif_fmt", choices=["json","msgpack"], default=None,
+    ap.add_argument("--pif-fmt", dest="pif_fmt", choices=["json","msgpack","cbor","npz"], default=None,
                     help="PIF format (auto by ext; stdin default=json)")
     ap.add_argument("--out", dest="out", default="-", help="output raw file or '-' for stdout")
     ap.add_argument("--out-fmt", dest="out_fmt", choices=["bin","csv","npy"], default="bin",
@@ -96,7 +89,7 @@ def main():
     if pif_fmt == "json":
         p = _load_pif_json_bytes(b)
     else:
-        p = _load_pif_msgpack_bytes(b)
+        p = _load_pif_binary_bytes(b, pif_fmt)
 
     # instantiate codec with M from schema
     try:
@@ -118,4 +111,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

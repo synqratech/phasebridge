@@ -1,16 +1,9 @@
-# cli/pb_kappa.py
+﻿# cli/pb_kappa.py
 from __future__ import annotations
 import argparse, sys, json
 from pathlib import Path
 from typing import Optional
 import numpy as np
-
-try:
-    import msgpack  # optional
-    _HAVE_MSGPACK = True
-except Exception:
-    msgpack = None  # type: ignore
-    _HAVE_MSGPACK = False
 
 from phasebridge.pif import PIF
 from phasebridge.kappa import kappa_timeseries, kappa_timeseries_windowed
@@ -23,26 +16,22 @@ def _detect_pif_fmt(path: Optional[Path], explicit: Optional[str]) -> str:
     suf = path.suffix.lower()
     if suf in (".mp", ".msgpack", ".mpk"):
         return "msgpack"
+    if suf in (".cbor", ".cbor2"):
+        return "cbor"
+    if suf == ".npz":
+        return "npz"
     return "json"
 
 def _load_pif_json_bytes(b: bytes) -> PIF:
     s = b.decode("utf-8")
     return PIF.from_json(s, validate=True)
 
-def _load_pif_msgpack_bytes(b: bytes) -> PIF:
-    if not _HAVE_MSGPACK:
-        raise RuntimeError("msgpack not installed. pip install msgpack")
-    obj = msgpack.unpackb(b, raw=False)  # type: ignore
-    if not isinstance(obj, dict):
-        raise ValueError("msgpack root must be an object")
-    return PIF.from_dict(obj, validate=True)
-
 def main():
     ap = argparse.ArgumentParser(
         description="Compute κ from PIF (global or windowed)"
     )
     ap.add_argument("--in", dest="inp", default="-", help="input PIF file or '-' for stdin")
-    ap.add_argument("--pif-fmt", dest="pif_fmt", choices=["json","msgpack"], default=None,
+    ap.add_argument("--pif-fmt", dest="pif_fmt", choices=["json","msgpack","cbor","npz"], default=None,
                     help="PIF format (auto by ext; stdin default=json)")
     ap.add_argument("--weighted", action="store_true", help="use amp as weights if amp is an array")
     ap.add_argument("--win", type=int, default=None, help="window size (samples) for windowed κ")
@@ -62,7 +51,10 @@ def main():
         b = in_path.read_bytes()
 
     pif_fmt = _detect_pif_fmt(in_path, args.pif_fmt)
-    p = _load_pif_json_bytes(b) if pif_fmt == "json" else _load_pif_msgpack_bytes(b)
+    if pif_fmt == "json":
+        p = _load_pif_json_bytes(b)
+    else:
+        p = PIF.from_bytes(b, fmt=pif_fmt, validate=True)
 
     # compute kappa
     if args.win is None or args.hop is None:
@@ -92,4 +84,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

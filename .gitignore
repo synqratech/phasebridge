@@ -40,8 +40,13 @@ Thumbs.db
 *.pif.json
 *.pif.msgpack
 *.pif.mpk
+*.pif.cbor
+*.pif.cbor2
+*.pif.npz
 *.npy
 *.npz
+*.cbor
+*.cbor2
 *.bin
 *.csv
 /tmp/
@@ -53,3 +58,6 @@ _out*
 
 # Data
 data/
+
+# Python version managers
+.python-version

@@ -10,6 +10,8 @@ from .utils import (
     is_float64_array,
     min_uint_dtype,
     as_uint_array,
+    choose_phase_dtype,
+    is_float32_safe_for_M,
     wrap_phase,
     nearest_phase_indices,
     grid_phases_from_uint,
@@ -37,6 +39,7 @@ __all__ = [
     # Utils
     "sha256_bytes", "prefixed_sha256_bytes", "sha256_of_array",
     "is_uint_array", "is_float64_array", "min_uint_dtype", "as_uint_array",
+    "choose_phase_dtype", "is_float32_safe_for_M",
     "wrap_phase", "nearest_phase_indices", "grid_phases_from_uint",
     "safe_len", "verify_roundtrip",
     # Errors
